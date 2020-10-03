@@ -17,7 +17,7 @@ from arguments import get_args
 from envs import make_vec_envs
 from model import Policy
 from storage import RolloutStorage
-#from visualize import visdom_plot
+from visualize import visdom_plot
 
 args = get_args()
 
@@ -48,17 +48,21 @@ except OSError:
     for f in files:
         os.remove(f)
 
-
 def main():
+    # Tensorboard
+    import tensorflow as tf
+    import datetime
+    tb_path = "tb"
+    tb_log_dir = os.path.join(tb_path, args.algo + "_"  + datetime.datetime.now().strftime("%Y%m%d-%H%M%S"))
+    tb_summary_writer = tf.summary.create_file_writer(tb_log_dir)
+
     torch.set_num_threads(1)
     device = torch.device("cuda:0" if args.cuda else "cpu")
 
-    """
     if args.vis:
         from visdom import Visdom
         viz = Visdom(port=args.port)
         win = None
-    """
 
     envs = make_vec_envs(args.env_name, args.seed, args.num_processes,
                         args.gamma, args.log_dir, args.add_timestep, device, False)
@@ -168,6 +172,11 @@ def main():
                 )
             )
 
+            with tb_summary_writer.as_default():
+                tf.summary.scalar('mean reward', np.mean(episode_rewards), step=total_num_steps)
+                tf.summary.scalar('median reward', np.median(episode_rewards), step=total_num_steps)
+                tf.summary.scalar('success rate', np.count_nonzero(np.greater(episode_rewards, 0)) / len(episode_rewards), step=total_num_steps)
+
         if args.eval_interval is not None and len(episode_rewards) > 1 and j % args.eval_interval == 0:
             eval_envs = make_vec_envs(args.env_name, args.seed + args.num_processes, args.num_processes,
                                 args.gamma, eval_log_dir, args.add_timestep, device, True)
@@ -211,15 +220,18 @@ def main():
                 np.mean(eval_episode_rewards)
             ))
 
-        """
+            with tb_summary_writer.as_default():
+                tf.summary.scalar('eval mean reward', np.mean(eval_episode_rewards), step=total_num_steps)
+                tf.summary.scalar('eval median reward', np.median(eval_episode_rewards), step=total_num_steps)
+                tf.summary.scalar('eval success rate', np.count_nonzero(np.greater(eval_episode_rewards, 0)) / len(eval_episode_rewards), step=total_num_steps)
+
         if args.vis and j % args.vis_interval == 0:
             try:
                 # Sometimes monitor doesn't properly flush the outputs
                 win = visdom_plot(viz, win, args.log_dir, args.env_name,
-                                  args.algo, args.num_frames)
+                                  args.algo, total_num_steps)
             except IOError:
                 pass
-        """
 
     envs.close()
 

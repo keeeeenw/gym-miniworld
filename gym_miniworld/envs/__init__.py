@@ -10,6 +10,7 @@ from .tmaze import *
 from .ymaze import *
 from .maze import *
 from .fourrooms import *
+from .fourrooms_meta import *
 from .threerooms import *
 from .wallgap import *
 from .sidewalk import *

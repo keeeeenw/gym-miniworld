@@ -4,6 +4,7 @@ import gym
 import numpy as np
 import torch
 from gym.spaces.box import Box
+from baselines import bench
 
 from vec_env import VecEnvWrapper
 from vec_env.dummy_vec_env import DummyVecEnv
@@ -41,9 +42,9 @@ def make_env(env_id, seed, rank, log_dir, add_timestep, allow_early_resets):
                 obs_shape) == 1 and str(env).find('TimeLimit') > -1:
             env = AddTimestep(env)
 
-        #if log_dir is not None:
-        #    env = bench.Monitor(env, os.path.join(log_dir, str(rank)),
-        #                        allow_early_resets=allow_early_resets)
+        if log_dir is not None:
+           env = bench.Monitor(env, os.path.join(log_dir, str(rank)),
+                               allow_early_resets=allow_early_resets)
 
         # If the input has shape (W,H,3), wrap for PyTorch convolutions
         obs_shape = env.observation_space.shape
