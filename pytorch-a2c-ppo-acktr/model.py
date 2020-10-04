@@ -12,15 +12,19 @@ class Flatten(nn.Module):
 
 
 class Policy(nn.Module):
-    def __init__(self, obs_shape, action_space, base_kwargs=None):
+    def __init__(self, obs_shape, action_space, meta=False, base_kwargs=None):
         super(Policy, self).__init__()
         if base_kwargs is None:
             base_kwargs = {}
-
-        if len(obs_shape) == 3:
+        
+        self.meta = meta
+        
+        if len(obs_shape) == 3 and not meta:
             self.base = CNNBase(obs_shape[0], **base_kwargs)
         elif len(obs_shape) == 1:
             self.base = MLPBase(obs_shape[0], **base_kwargs)
+        elif len(obs_shape) == 3 and self.meta:
+            self.base = CNNMetaBase(obs_shape[0], **base_kwargs)
         else:
             raise NotImplementedError
 
@@ -45,8 +49,12 @@ class Policy(nn.Module):
     def forward(self, inputs, rnn_hxs, masks):
         raise NotImplementedError
 
-    def act(self, inputs, rnn_hxs, masks, deterministic=False):
-        value, actor_features, rnn_hxs = self.base(inputs, rnn_hxs, masks)
+    def act(self, inputs, rnn_hxs, masks, actions, rewards, deterministic=False):
+        if self.meta:
+            # TODO: change the placeholder to previous action and award
+            value, actor_features, rnn_hxs = self.base(inputs, actions, rewards, rnn_hxs, masks)
+        else:
+            value, actor_features, rnn_hxs = self.base(inputs, rnn_hxs, masks)
         dist = self.dist(actor_features)
 
         if deterministic:
@@ -59,12 +67,19 @@ class Policy(nn.Module):
 
         return value, action, action_log_probs, rnn_hxs
 
-    def get_value(self, inputs, rnn_hxs, masks):
-        value, _, _ = self.base(inputs, rnn_hxs, masks)
+    def get_value(self, inputs, rnn_hxs, masks, actions, rewards):
+        if self.meta:
+            # TODO: change the placeholder to previous action and award
+            value, _, _ = self.base(inputs, actions, rewards, rnn_hxs, masks)
+        else:
+            value, _, _ = self.base(inputs, rnn_hxs, masks)
         return value
 
-    def evaluate_actions(self, inputs, rnn_hxs, masks, action):
-        value, actor_features, rnn_hxs = self.base(inputs, rnn_hxs, masks)
+    def evaluate_actions(self, inputs, rnn_hxs, masks, action, reward=None):
+        if self.meta:
+            value, actor_features, rnn_hxs = self.base(inputs, action, reward, rnn_hxs, masks)
+        else:
+            value, actor_features, rnn_hxs = self.base(inputs, rnn_hxs, masks)
         dist = self.dist(actor_features)
 
         action_log_probs = dist.log_probs(action)
@@ -102,8 +117,14 @@ class NNBase(nn.Module):
     def output_size(self):
         return self._hidden_size
 
-    def _forward_gru(self, x, hxs, masks):
+    def _forward_gru(self, x, hxs, masks, prev_action=None, prev_reward=None):
+        # convert action to one hot vector
+        prev_action = torch.nn.functional.one_hot(prev_action, 4).squeeze(1)
+
         if x.size(0) == hxs.size(0):
+            if prev_action is not None and prev_reward is not None:
+                # [16, 128] -> [16, 133]
+                x = torch.cat([x, prev_action.float(), prev_reward.float()], dim=1)
             x = hxs = self.gru(x, hxs * masks)
         else:
             # x is a (T, N, -1) tensor that has been flatten to (T * N, -1)
@@ -112,6 +133,18 @@ class NNBase(nn.Module):
 
             # unflatten
             x = x.view(T, N, x.size(1))
+        
+            # TODO: for some reason, this only works for 16 processes
+            # This issue occurs during evaluate_actions
+            # RuntimeError: invalid argument 0: Sizes of tensors must match except in dimension 2.
+            # Got 160 and 80 in dimension 0 at /pytorch/aten/src/THC/generic/THCTensorMath.cu:71
+            # Maybe prev_action and prev_reward is too big? We need to the unflatten
+            if prev_action is not None and prev_reward is not None:
+                prev_action = prev_action.view(T, N, prev_action.size(1))
+                prev_reward = prev_reward.view(T, N, prev_reward.size(1))
+
+                # [80, 1, 128] -> [80, 1, 133]
+                x = torch.cat([x, prev_action.float(), prev_reward.float()], dim=2)
 
             # Same deal with masks
             masks = masks.view(T, N, 1)
@@ -190,6 +223,62 @@ class CNNBase(NNBase):
 
         if self.is_recurrent:
             x, rnn_hxs = self._forward_gru(x, rnn_hxs, masks)
+
+        return self.critic_linear(x), x, rnn_hxs
+
+
+class CNNMetaBase(NNBase):
+    def __init__(self, num_inputs, recurrent=False, hidden_size=133):
+        super(CNNMetaBase, self).__init__(recurrent, hidden_size, hidden_size)
+
+        init_ = lambda m: init(m,
+            nn.init.orthogonal_,
+            lambda x: nn.init.constant_(x, 0),
+            nn.init.calculate_gain('relu'))
+
+        # For 80x60 input
+        self.main = nn.Sequential(
+            init_(nn.Conv2d(num_inputs, 32, kernel_size=5, stride=2)),
+            nn.BatchNorm2d(32),
+            nn.ReLU(),
+
+            init_(nn.Conv2d(32, 32, kernel_size=5, stride=2)),
+            nn.BatchNorm2d(32),
+            nn.ReLU(),
+
+            init_(nn.Conv2d(32, 32, kernel_size=4, stride=2)),
+            nn.BatchNorm2d(32),
+            nn.ReLU(),
+
+            #Print(),
+            Flatten(),
+
+            #nn.Dropout(0.2),
+
+            # -4 from action and -1 from reward
+            init_(nn.Linear(32 * 7 * 5, hidden_size - 5)),
+            nn.ReLU()
+        )
+
+        init_ = lambda m: init(m,
+            nn.init.orthogonal_,
+            lambda x: nn.init.constant_(x, 0))
+
+        self.critic_linear = init_(nn.Linear(hidden_size, 1))
+
+        self.train()
+
+    def forward(self, inputs, prev_action, prev_reward, rnn_hxs, masks):
+        #print(x.size())
+
+        x = inputs / 255.0
+        #print(x.size())
+
+        x = self.main(x)
+        #print(x.size())
+
+        if self.is_recurrent:
+            x, rnn_hxs = self._forward_gru(x, rnn_hxs, masks, prev_action, prev_reward)
 
         return self.critic_linear(x), x, rnn_hxs
 

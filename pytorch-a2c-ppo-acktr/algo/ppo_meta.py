@@ -4,7 +4,7 @@ import torch.nn.functional as F
 import torch.optim as optim
 
 
-class PPO():
+class PPOMeta():
     def __init__(self,
                  actor_critic,
                  clip_param,
@@ -43,18 +43,19 @@ class PPO():
                 data_generator = rollouts.recurrent_generator(
                     advantages, self.num_mini_batch)
             else:
-                data_generator = rollouts.feed_forward_generator(
-                    advantages, self.num_mini_batch)
+                print("We do not support meta PPO without recurrent structure")
+                # data_generator = rollouts.feed_forward_generator(
+                #     advantages, self.num_mini_batch)
 
             for sample in data_generator:
                 obs_batch, recurrent_hidden_states_batch, actions_batch, \
                    return_batch, masks_batch, old_action_log_probs_batch, \
-                        _, adv_targ = sample
+                   rewards_batch, adv_targ = sample
 
                 # Reshape to do in a single forward pass for all steps
                 values, action_log_probs, dist_entropy, states = self.actor_critic.evaluate_actions(
                     obs_batch, recurrent_hidden_states_batch,
-                    masks_batch, actions_batch)
+                    masks_batch, actions_batch, reward=rewards_batch)
 
                 ratio = torch.exp(action_log_probs - old_action_log_probs_batch)
                 surr1 = ratio * adv_targ

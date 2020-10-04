@@ -21,9 +21,9 @@ from visualize import visdom_plot
 
 args = get_args()
 
-assert args.algo in ['a2c', 'ppo', 'acktr']
+assert args.algo in ['a2c', 'ppo', 'acktr', 'ppometa']
 if args.recurrent_policy:
-    assert args.algo in ['a2c', 'ppo'], \
+    assert args.algo in ['a2c', 'ppo', 'ppometa'], \
         'Recurrent policy is not implemented for ACKTR'
 
 num_updates = int(args.num_frames) // args.num_steps // args.num_processes
@@ -61,7 +61,7 @@ def main():
         pass
     # setup tensorboard
     tb_path = "tb"
-    tb_log_dir = os.path.join(tb_path, args.algo + "_"  + datetime.datetime.now().strftime("%Y%m%d-%H%M%S"))
+    tb_log_dir = os.path.join(tb_path, args.algo, datetime.datetime.now().strftime("%Y%m%d-%H%M%S"))
     tb_summary_writer = tf.summary.create_file_writer(tb_log_dir)
 
     torch.set_num_threads(1)
@@ -75,7 +75,8 @@ def main():
     envs = make_vec_envs(args.env_name, args.seed, args.num_processes,
                         args.gamma, args.log_dir, args.add_timestep, device, False)
 
-    actor_critic = Policy(envs.observation_space.shape, envs.action_space,
+    meta = True if args.algo == 'ppometa' else False
+    actor_critic = Policy(envs.observation_space.shape, envs.action_space, meta,
         base_kwargs={'recurrent': args.recurrent_policy})
     actor_critic.to(device)
 
@@ -93,6 +94,12 @@ def main():
     elif args.algo == 'acktr':
         agent = algo.A2C_ACKTR(actor_critic, args.value_loss_coef,
                                args.entropy_coef, acktr=True)
+
+    elif args.algo == 'ppometa':
+        agent = algo.PPOMeta(actor_critic, args.clip_param, args.ppo_epoch, args.num_mini_batch,
+                         args.value_loss_coef, args.entropy_coef, lr=args.lr,
+                               eps=args.eps,
+                               max_grad_norm=args.max_grad_norm)
 
     rollouts = RolloutStorage(args.num_steps, args.num_processes,
                         envs.observation_space.shape, envs.action_space,
@@ -112,7 +119,9 @@ def main():
                 value, action, action_log_prob, recurrent_hidden_states = actor_critic.act(
                         rollouts.obs[step],
                         rollouts.recurrent_hidden_states[step],
-                        rollouts.masks[step])
+                        rollouts.masks[step],
+                        rollouts.actions[step],
+                        rollouts.rewards[step])
 
             # Obser reward and next obs
             obs, reward, done, infos = envs.step(action)
@@ -136,7 +145,9 @@ def main():
         with torch.no_grad():
             next_value = actor_critic.get_value(rollouts.obs[-1],
                                                 rollouts.recurrent_hidden_states[-1],
-                                                rollouts.masks[-1]).detach()
+                                                rollouts.masks[-1],
+                                                rollouts.actions[-1],
+                                                rollouts.rewards[-1]).detach()
 
         rollouts.compute_returns(next_value, args.use_gae, args.gamma, args.tau)
 
