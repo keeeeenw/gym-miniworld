@@ -49,9 +49,17 @@ except OSError:
         os.remove(f)
 
 def main():
-    # Tensorboard
+    # Tensorboard Setup
     import tensorflow as tf
     import datetime
+    # limit tf memory
+    physical_devices = tf.config.list_physical_devices('GPU')
+    try:
+        tf.config.experimental.set_memory_growth(physical_devices[0], True)
+    except:
+        # Invalid device or cannot modify virtual devices once initialized.
+        pass
+    # setup tensorboard
     tb_path = "tb"
     tb_log_dir = os.path.join(tb_path, args.algo + "_"  + datetime.datetime.now().strftime("%Y%m%d-%H%M%S"))
     tb_summary_writer = tf.summary.create_file_writer(tb_log_dir)
@@ -136,7 +144,7 @@ def main():
 
         rollouts.after_update()
 
-        if j % args.save_interval == 0 and args.save_dir != "":
+        if j > 1 and j % args.save_interval == 0 and args.save_dir != "":
             print('Saving model')
             print()
 
@@ -157,7 +165,7 @@ def main():
 
         total_num_steps = (j + 1) * args.num_processes * args.num_steps
 
-        if j % args.log_interval == 0 and len(episode_rewards) > 1:
+        if j > 1 and j % args.log_interval == 0 and len(episode_rewards) > 1:
             end = time.time()
             print("Updates {}, num timesteps {}, FPS {} \n Last {} training episodes: mean/median reward {:.2f}/{:.2f}, min/max reward {:.2f}/{:.2f}, success rate {:.2f}\n".
                 format(
@@ -225,7 +233,7 @@ def main():
                 tf.summary.scalar('eval median reward', np.median(eval_episode_rewards), step=total_num_steps)
                 tf.summary.scalar('eval success rate', np.count_nonzero(np.greater(eval_episode_rewards, 0)) / len(eval_episode_rewards), step=total_num_steps)
 
-        if args.vis and j % args.vis_interval == 0:
+        if j > 1 and args.vis and j % args.vis_interval == 0:
             try:
                 # Sometimes monitor doesn't properly flush the outputs
                 win = visdom_plot(viz, win, args.log_dir, args.env_name,
