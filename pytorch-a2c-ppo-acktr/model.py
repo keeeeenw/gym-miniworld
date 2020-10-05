@@ -49,10 +49,9 @@ class Policy(nn.Module):
     def forward(self, inputs, rnn_hxs, masks):
         raise NotImplementedError
 
-    def act(self, inputs, rnn_hxs, masks, actions, rewards, deterministic=False):
+    def act(self, inputs, rnn_hxs, masks, actions, prev_rewards, prev_actions, deterministic=False):
         if self.meta:
-            # TODO: change the placeholder to previous action and award
-            value, actor_features, rnn_hxs = self.base(inputs, actions, rewards, rnn_hxs, masks)
+            value, actor_features, rnn_hxs = self.base(inputs, prev_actions, prev_rewards, rnn_hxs, masks)
         else:
             value, actor_features, rnn_hxs = self.base(inputs, rnn_hxs, masks)
         dist = self.dist(actor_features)
@@ -67,17 +66,17 @@ class Policy(nn.Module):
 
         return value, action, action_log_probs, rnn_hxs
 
-    def get_value(self, inputs, rnn_hxs, masks, actions, rewards):
+    def get_value(self, inputs, rnn_hxs, masks, actions, prev_rewards, prev_actions):
         if self.meta:
             # TODO: change the placeholder to previous action and award
-            value, _, _ = self.base(inputs, actions, rewards, rnn_hxs, masks)
+            value, _, _ = self.base(inputs, prev_actions, prev_rewards, rnn_hxs, masks)
         else:
             value, _, _ = self.base(inputs, rnn_hxs, masks)
         return value
 
-    def evaluate_actions(self, inputs, rnn_hxs, masks, action, reward=None):
+    def evaluate_actions(self, inputs, rnn_hxs, masks, action, prev_rewards=None, prev_actions=None):
         if self.meta:
-            value, actor_features, rnn_hxs = self.base(inputs, action, reward, rnn_hxs, masks)
+            value, actor_features, rnn_hxs = self.base(inputs, prev_actions, prev_rewards, rnn_hxs, masks)
         else:
             value, actor_features, rnn_hxs = self.base(inputs, rnn_hxs, masks)
         dist = self.dist(actor_features)
@@ -268,7 +267,7 @@ class CNNMetaBase(NNBase):
 
         self.train()
 
-    def forward(self, inputs, prev_action, prev_reward, rnn_hxs, masks):
+    def forward(self, inputs, prev_actions, prev_rewards, rnn_hxs, masks):
         #print(x.size())
 
         x = inputs / 255.0
@@ -278,7 +277,7 @@ class CNNMetaBase(NNBase):
         #print(x.size())
 
         if self.is_recurrent:
-            x, rnn_hxs = self._forward_gru(x, rnn_hxs, masks, prev_action, prev_reward)
+            x, rnn_hxs = self._forward_gru(x, rnn_hxs, masks, prev_actions, prev_rewards)
 
         return self.critic_linear(x), x, rnn_hxs
 

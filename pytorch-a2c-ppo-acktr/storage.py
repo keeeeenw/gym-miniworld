@@ -11,6 +11,7 @@ class RolloutStorage(object):
         self.obs = torch.zeros(num_steps + 1, num_processes, *obs_shape)
         self.recurrent_hidden_states = torch.zeros(num_steps + 1, num_processes, recurrent_hidden_state_size)
         self.rewards = torch.zeros(num_steps, num_processes, 1)
+        self.prev_rewards = torch.zeros(num_steps + 1, num_processes, 1)
         self.value_preds = torch.zeros(num_steps + 1, num_processes, 1)
         self.returns = torch.zeros(num_steps + 1, num_processes, 1)
         self.action_log_probs = torch.zeros(num_steps, num_processes, 1)
@@ -19,8 +20,10 @@ class RolloutStorage(object):
         else:
             action_shape = action_space.shape[0]
         self.actions = torch.zeros(num_steps, num_processes, action_shape)
+        self.prev_actions = torch.zeros(num_steps + 1, num_processes, action_shape)
         if action_space.__class__.__name__ == 'Discrete':
             self.actions = self.actions.long()
+            self.prev_actions = self.prev_actions.long()
         self.masks = torch.ones(num_steps + 1, num_processes, 1)
 
         self.num_steps = num_steps
@@ -30,10 +33,12 @@ class RolloutStorage(object):
         self.obs = self.obs.to(device)
         self.recurrent_hidden_states = self.recurrent_hidden_states.to(device)
         self.rewards = self.rewards.to(device)
+        self.prev_rewards = self.prev_rewards.to(device)
         self.value_preds = self.value_preds.to(device)
         self.returns = self.returns.to(device)
         self.action_log_probs = self.action_log_probs.to(device)
         self.actions = self.actions.to(device)
+        self.prev_actions = self.prev_actions.to(device)
         self.masks = self.masks.to(device)
 
     def insert(self, obs, recurrent_hidden_states, actions, action_log_probs, value_preds, rewards, masks):
@@ -43,6 +48,8 @@ class RolloutStorage(object):
         self.action_log_probs[self.step].copy_(action_log_probs)
         self.value_preds[self.step].copy_(value_preds)
         self.rewards[self.step].copy_(rewards)
+        self.prev_rewards[self.step + 1].copy_(rewards)
+        self.prev_actions[self.step + 1].copy_(actions)
         self.masks[self.step + 1].copy_(masks)
 
         self.step = (self.step + 1) % self.num_steps
@@ -105,7 +112,8 @@ class RolloutStorage(object):
             return_batch = []
             masks_batch = []
             old_action_log_probs_batch = []
-            rewards_batch = []
+            prev_rewards_batch = []
+            prev_actions_batch = []
             adv_targ = []
 
             for offset in range(num_envs_per_batch):
@@ -116,9 +124,10 @@ class RolloutStorage(object):
                 return_batch.append(self.returns[:-1, ind])
                 masks_batch.append(self.masks[:-1, ind])
                 old_action_log_probs_batch.append(self.action_log_probs[:, ind])
-                rewards_batch.append(self.rewards[:, ind])
+                prev_rewards_batch.append(self.prev_rewards[:-1, ind]) # Get rewards from previous steps for all processes
+                prev_actions_batch.append(self.prev_actions[:-1, ind]) # Get actions from previous steps for all processes
                 adv_targ.append(advantages[:, ind])
-
+            
             T, N = self.num_steps, num_envs_per_batch
             # These are all tensors of size (T, N, -1)
             obs_batch = torch.stack(obs_batch, 1)
@@ -127,7 +136,8 @@ class RolloutStorage(object):
             masks_batch = torch.stack(masks_batch, 1)
             old_action_log_probs_batch = torch.stack(old_action_log_probs_batch, 1)
             adv_targ = torch.stack(adv_targ, 1)
-            rewards_batch = torch.stack(rewards_batch, 1)
+            prev_rewards_batch = torch.stack(prev_rewards_batch, 1)
+            prev_actions_batch = torch.stack(prev_actions_batch, 1)
 
             # States is just a (N, -1) tensor
             recurrent_hidden_states_batch = torch.stack(recurrent_hidden_states_batch, 1).view(N, -1)
@@ -140,7 +150,8 @@ class RolloutStorage(object):
             old_action_log_probs_batch = _flatten_helper(T, N, \
                     old_action_log_probs_batch)
             adv_targ = _flatten_helper(T, N, adv_targ)
-            rewards_batch = _flatten_helper(T, N, rewards_batch)
+            prev_rewards_batch = _flatten_helper(T, N, prev_rewards_batch)
+            prev_actions_batch = _flatten_helper(T, N, prev_actions_batch)
 
             yield obs_batch, recurrent_hidden_states_batch, actions_batch, \
-                return_batch, masks_batch, old_action_log_probs_batch, rewards_batch, adv_targ
+                return_batch, masks_batch, old_action_log_probs_batch, prev_rewards_batch, prev_actions_batch, adv_targ

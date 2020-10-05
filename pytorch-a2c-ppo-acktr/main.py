@@ -121,7 +121,8 @@ def main():
                         rollouts.recurrent_hidden_states[step],
                         rollouts.masks[step],
                         rollouts.actions[step],
-                        rollouts.rewards[step])
+                        rollouts.prev_rewards[step],
+                        rollouts.prev_actions[step])
 
             # Obser reward and next obs
             obs, reward, done, infos = envs.step(action)
@@ -147,7 +148,8 @@ def main():
                                                 rollouts.recurrent_hidden_states[-1],
                                                 rollouts.masks[-1],
                                                 rollouts.actions[-1],
-                                                rollouts.rewards[-1]).detach()
+                                                rollouts.prev_rewards[-1],
+                                                rollouts.prev_actions[-1]).detach()
 
         rollouts.compute_returns(next_value, args.use_gae, args.gamma, args.tau)
 
