@@ -133,11 +133,6 @@ class NNBase(nn.Module):
             # unflatten
             x = x.view(T, N, x.size(1))
         
-            # TODO: for some reason, this only works for 16 processes
-            # This issue occurs during evaluate_actions
-            # RuntimeError: invalid argument 0: Sizes of tensors must match except in dimension 2.
-            # Got 160 and 80 in dimension 0 at /pytorch/aten/src/THC/generic/THCTensorMath.cu:71
-            # Maybe prev_action and prev_reward is too big? We need to the unflatten
             if prev_action is not None and prev_reward is not None:
                 prev_action = prev_action.view(T, N, prev_action.size(1))
                 prev_reward = prev_reward.view(T, N, prev_reward.size(1))
@@ -159,6 +154,87 @@ class NNBase(nn.Module):
             # flatten
             x = x.view(T * N, -1)
 
+        return x, hxs
+
+
+class NNStackedBase(nn.Module):
+
+    def __init__(self, recurrent, recurrent_input_size, hidden_size):
+        super(NNStackedBase, self).__init__()
+
+        self._hidden_size = hidden_size
+        self._recurrent = recurrent
+
+        if recurrent:
+            # TODO: consider producing hidden_size - 4 here
+            self.gru1 = nn.GRUCell(recurrent_input_size, hidden_size)
+            nn.init.orthogonal_(self.gru1.weight_ih.data)
+            nn.init.orthogonal_(self.gru1.weight_hh.data)
+            self.gru1.bias_ih.data.fill_(0)
+            self.gru1.bias_hh.data.fill_(0)
+
+            self.gru2 = nn.GRUCell(hidden_size, hidden_size)
+            nn.init.orthogonal_(self.gru2.weight_ih.data)
+            nn.init.orthogonal_(self.gru2.weight_hh.data)
+            self.gru2.bias_ih.data.fill_(0)
+            self.gru2.bias_hh.data.fill_(0)
+
+    @property
+    def is_recurrent(self):
+        return self._recurrent
+
+    @property
+    def recurrent_hidden_state_size(self):
+        if self._recurrent:
+            return self._hidden_size
+        return 1
+
+    @property
+    def output_size(self):
+        return self._hidden_size
+
+    def _forward_gru(self, x, hxs, masks, prev_action=None, prev_reward=None):
+        # convert action to one hot vector
+        prev_action = torch.nn.functional.one_hot(prev_action, 4).squeeze(1)
+
+        if x.size(0) == hxs.size(0):
+            # [16, 128] -> [16, 129]
+            x = torch.cat([x, prev_reward.float(), torch.zeros_like(prev_action).float()], dim=1)
+            x = self.gru1(x, hxs * masks)
+            # [16, 129] -> [16, 133]
+            x[:,129:] = prev_action.float()[:,:]
+            hxs = x
+            x = hxs = self.gru2(x, hxs * masks)
+        else:
+            # x is a (T, N, -1) tensor that has been flatten to (T * N, -1)
+            N = hxs.size(0)
+            T = int(x.size(0) / N)
+
+            # unflatten
+            x = x.view(T, N, x.size(1))
+        
+            prev_action = prev_action.view(T, N, prev_action.size(1))
+            prev_reward = prev_reward.view(T, N, prev_reward.size(1))
+
+            # [80, 1, 128] -> [80, 1, 129]
+            x = torch.cat([x, prev_reward.float(), torch.zeros_like(prev_action).float()], dim=2)
+
+            # Same deal with masks
+            masks = masks.view(T, N, 1)
+
+            outputs = []
+            for i in range(T):
+                hx = self.gru1(x[i], hxs * masks[i])
+                hx[:,129:] = prev_action[i].float()[:,:]
+                hxsi = hx
+                hx = hxsi = self.gru2(hx, hxsi * masks[i])
+                outputs.append(hx)
+
+            # assert len(outputs) == T
+            # x is a (T, N, -1) tensor
+            x = torch.stack(outputs, dim=0)
+            # flatten
+            x = x.view(T * N, -1)
         return x, hxs
 
 
@@ -226,7 +302,7 @@ class CNNBase(NNBase):
         return self.critic_linear(x), x, rnn_hxs
 
 
-class CNNMetaBase(NNBase):
+class CNNMetaBase(NNStackedBase):
     def __init__(self, num_inputs, recurrent=False, hidden_size=133):
         super(CNNMetaBase, self).__init__(recurrent, hidden_size, hidden_size)
 
