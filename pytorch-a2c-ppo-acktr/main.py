@@ -60,8 +60,10 @@ def main():
         # Invalid device or cannot modify virtual devices once initialized.
         pass
     # setup tensorboard
-    tb_path = "tb"
-    tb_log_dir = os.path.join(tb_path, args.algo, datetime.datetime.now().strftime("%Y%m%d-%H%M%S"))
+    if args.tb_dir == 'tb':
+        tb_log_dir = os.path.join(args.tb_dir, args.algo, datetime.datetime.now().strftime("%Y%m%d-%H%M%S"))
+    else:
+        tb_log_dir = os.path.join('tb', args.tb_dir)
     tb_summary_writer = tf.summary.create_file_writer(tb_log_dir)
 
     torch.set_num_threads(1)
