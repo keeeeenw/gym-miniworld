@@ -176,7 +176,8 @@ def main():
 
             save_model = [save_model, hasattr(envs.venv, 'ob_rms') and envs.venv.ob_rms or None]
 
-            torch.save(save_model, os.path.join(save_path, args.env_name + ".pt"))
+            torch.save(save_model, os.path.join(save_path, args.env_name + "_" + str(j) + ".pt"))
+            # torch.save(save_model, os.path.join(save_path, args.env_name + ".pt"))
 
         total_num_steps = (j + 1) * args.num_processes * args.num_steps
 

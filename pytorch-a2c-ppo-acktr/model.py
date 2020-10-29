@@ -49,7 +49,7 @@ class Policy(nn.Module):
     def forward(self, inputs, rnn_hxs, masks):
         raise NotImplementedError
 
-    def act(self, inputs, rnn_hxs, masks, actions, prev_rewards, prev_actions, deterministic=False):
+    def act(self, inputs, rnn_hxs, masks, actions=None, prev_rewards=None, prev_actions=None, deterministic=False):
         if self.meta:
             value, actor_features, rnn_hxs = self.base(inputs, prev_actions, prev_rewards, rnn_hxs, masks)
         else:
@@ -118,7 +118,8 @@ class NNBase(nn.Module):
 
     def _forward_gru(self, x, hxs, masks, prev_action=None, prev_reward=None):
         # convert action to one hot vector
-        prev_action = torch.nn.functional.one_hot(prev_action, 4).squeeze(1)
+        if prev_action is not None:
+            prev_action = torch.nn.functional.one_hot(prev_action, 4).squeeze(1)
 
         if x.size(0) == hxs.size(0):
             if prev_action is not None and prev_reward is not None:
@@ -302,7 +303,7 @@ class CNNBase(NNBase):
         return self.critic_linear(x), x, rnn_hxs
 
 
-class CNNMetaBase(NNStackedBase):
+class CNNMetaBase(NNBase):
     def __init__(self, num_inputs, recurrent=False, hidden_size=133):
         super(CNNMetaBase, self).__init__(recurrent, hidden_size, hidden_size)
 
