@@ -15,6 +15,7 @@ class RolloutStorage(object):
         self.value_preds = torch.zeros(num_steps + 1, num_processes, 1)
         self.returns = torch.zeros(num_steps + 1, num_processes, 1)
         self.action_log_probs = torch.zeros(num_steps, num_processes, 1)
+        self.infos = torch.zeros(num_steps + 1, num_processes, 6) # 3 for goal pos 3 for agent pos
         if action_space.__class__.__name__ == 'Discrete':
             action_shape = 1
         else:
@@ -40,8 +41,9 @@ class RolloutStorage(object):
         self.actions = self.actions.to(device)
         self.prev_actions = self.prev_actions.to(device)
         self.masks = self.masks.to(device)
+        self.infos = self.infos.to(device)
 
-    def insert(self, obs, recurrent_hidden_states, actions, action_log_probs, value_preds, rewards, masks):
+    def insert(self, obs, recurrent_hidden_states, actions, action_log_probs, value_preds, rewards, masks, infos=None):
         self.obs[self.step + 1].copy_(obs)
         self.recurrent_hidden_states[self.step + 1].copy_(recurrent_hidden_states)
         self.actions[self.step].copy_(actions)
@@ -51,6 +53,8 @@ class RolloutStorage(object):
         self.prev_rewards[self.step + 1].copy_(rewards)
         self.prev_actions[self.step + 1].copy_(actions)
         self.masks[self.step + 1].copy_(masks)
+        if infos is not None:
+            self.infos[self.step + 1].copy_(infos)
 
         self.step = (self.step + 1) % self.num_steps
 
@@ -114,6 +118,7 @@ class RolloutStorage(object):
             old_action_log_probs_batch = []
             prev_rewards_batch = []
             prev_actions_batch = []
+            infos_batch = []
             adv_targ = []
 
             for offset in range(num_envs_per_batch):
@@ -126,6 +131,7 @@ class RolloutStorage(object):
                 old_action_log_probs_batch.append(self.action_log_probs[:, ind])
                 prev_rewards_batch.append(self.prev_rewards[:-1, ind]) # Get rewards from previous steps for all processes
                 prev_actions_batch.append(self.prev_actions[:-1, ind]) # Get actions from previous steps for all processes
+                infos_batch.append(self.infos[:-1, ind])
                 adv_targ.append(advantages[:, ind])
             
             T, N = self.num_steps, num_envs_per_batch
@@ -138,6 +144,7 @@ class RolloutStorage(object):
             adv_targ = torch.stack(adv_targ, 1)
             prev_rewards_batch = torch.stack(prev_rewards_batch, 1)
             prev_actions_batch = torch.stack(prev_actions_batch, 1)
+            infos_batch = torch.stack(infos_batch, 1)
 
             # States is just a (N, -1) tensor
             recurrent_hidden_states_batch = torch.stack(recurrent_hidden_states_batch, 1).view(N, -1)
@@ -152,6 +159,7 @@ class RolloutStorage(object):
             adv_targ = _flatten_helper(T, N, adv_targ)
             prev_rewards_batch = _flatten_helper(T, N, prev_rewards_batch)
             prev_actions_batch = _flatten_helper(T, N, prev_actions_batch)
+            infos_batch = _flatten_helper(T, N, infos_batch)
 
             yield obs_batch, recurrent_hidden_states_batch, actions_batch, \
-                return_batch, masks_batch, old_action_log_probs_batch, prev_rewards_batch, prev_actions_batch, adv_targ
+                return_batch, masks_batch, old_action_log_probs_batch, prev_rewards_batch, prev_actions_batch, infos_batch, adv_targ

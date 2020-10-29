@@ -124,7 +124,8 @@ def main():
                         rollouts.masks[step],
                         rollouts.actions[step],
                         rollouts.prev_rewards[step],
-                        rollouts.prev_actions[step])
+                        rollouts.prev_actions[step],
+                        rollouts.infos[step])
 
             # Obser reward and next obs
             obs, reward, done, infos = envs.step(action)
@@ -143,7 +144,13 @@ def main():
 
             # If done then clean the history of observations.
             masks = torch.FloatTensor([[0.0] if done_ else [1.0] for done_ in done])
-            rollouts.insert(obs, recurrent_hidden_states, action, action_log_prob, value, reward, masks)
+            rollouts_infos = None
+            if len(infos) > 0 and 'box' in infos[0].keys() and 'agent' in infos[0].keys():
+                rollouts_infos = []
+                for info in infos:
+                    rollouts_infos.append(np.concatenate([info['box'].pos, info['agent'].pos]))
+                rollouts_infos = torch.tensor(rollouts_infos)
+            rollouts.insert(obs, recurrent_hidden_states, action, action_log_prob, value, reward, masks, rollouts_infos)
 
         with torch.no_grad():
             next_value = actor_critic.get_value(rollouts.obs[-1],
@@ -151,7 +158,8 @@ def main():
                                                 rollouts.masks[-1],
                                                 rollouts.actions[-1],
                                                 rollouts.prev_rewards[-1],
-                                                rollouts.prev_actions[-1]).detach()
+                                                rollouts.prev_actions[-1],
+                                                rollouts.infos[-1]).detach()
 
         rollouts.compute_returns(next_value, args.use_gae, args.gamma, args.tau)
 

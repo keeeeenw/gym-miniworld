@@ -40,6 +40,9 @@ export DISPLAY=:0
 
 # PPOMeta MiniWorld-FourRooms-Meta 32 processes
 # python3 main.py --algo ppometa --num-frames 50000000 --num-processes 32 --num-steps 80 --lr 0.00005 --env-name MiniWorld-FourRoomsMeta-v0 --recurrent-policy --tb-dir ppo_meta/sanity_32_batch_50M
-python3 main.py --algo ppometa --num-frames 50000000 --num-processes 48 --num-steps 80 --lr 0.00005 --env-name MiniWorld-FourRoomsMeta-v0 --recurrent-policy --tb-dir ppo_meta/sanity_48_step_50M
-python3 main.py --algo ppometa --num-frames 50000000 --num-processes 32 --num-steps 80 --lr 0.00005 --env-name MiniWorld-FourRoomsMeta-v0 --recurrent-policy --tb-dir ppo_meta/sanity_32_step_50M
+# python3 main.py --algo ppometa --num-frames 50000000 --num-processes 48 --num-steps 80 --lr 0.00005 --env-name MiniWorld-FourRoomsMeta-v0 --recurrent-policy --tb-dir ppo_meta/sanity_48_step_50M
+# python3 main.py --algo ppometa --num-frames 50000000 --num-processes 32 --num-steps 80 --lr 0.00005 --env-name MiniWorld-FourRoomsMeta-v0 --recurrent-policy --tb-dir ppo_meta/sanity_32_step_50M
+
+# Agent to box position as info
+python3 main.py --algo ppometa --num-frames 50000000 --num-processes 48 --num-steps 80 --lr 0.00005 --env-name MiniWorld-FourRoomsMeta-v0 --recurrent-policy --tb-dir ppo_meta/raw_agent_box_infos_50M
 

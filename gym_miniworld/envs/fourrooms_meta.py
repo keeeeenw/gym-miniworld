@@ -51,7 +51,7 @@ class FourRoomsMeta(MiniWorldEnv):
         color = self.rand.color()
         self.box = self.place_entity(Box(color=color))
 
-        self.place_agent()
+        self.agent = self.place_agent()
 
     def step(self, action):
         obs, reward, done, info = super().step(action)
@@ -59,5 +59,8 @@ class FourRoomsMeta(MiniWorldEnv):
         if self.near(self.box):
             reward += self._reward()
             done = True
+        
+        info['box'] = self.box
+        info['agent'] = self.agent
 
         return obs, reward, done, info

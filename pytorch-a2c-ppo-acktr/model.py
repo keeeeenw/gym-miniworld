@@ -49,9 +49,9 @@ class Policy(nn.Module):
     def forward(self, inputs, rnn_hxs, masks):
         raise NotImplementedError
 
-    def act(self, inputs, rnn_hxs, masks, actions=None, prev_rewards=None, prev_actions=None, deterministic=False):
+    def act(self, inputs, rnn_hxs, masks, actions=None, prev_rewards=None, prev_actions=None, infos=None, deterministic=False):
         if self.meta:
-            value, actor_features, rnn_hxs = self.base(inputs, prev_actions, prev_rewards, rnn_hxs, masks)
+            value, actor_features, rnn_hxs = self.base(inputs, prev_actions, prev_rewards, rnn_hxs, masks, infos)
         else:
             value, actor_features, rnn_hxs = self.base(inputs, rnn_hxs, masks)
         dist = self.dist(actor_features)
@@ -66,17 +66,16 @@ class Policy(nn.Module):
 
         return value, action, action_log_probs, rnn_hxs
 
-    def get_value(self, inputs, rnn_hxs, masks, actions, prev_rewards, prev_actions):
+    def get_value(self, inputs, rnn_hxs, masks, actions, prev_rewards, prev_actions, infos=None):
         if self.meta:
-            # TODO: change the placeholder to previous action and award
-            value, _, _ = self.base(inputs, prev_actions, prev_rewards, rnn_hxs, masks)
+            value, _, _ = self.base(inputs, prev_actions, prev_rewards, rnn_hxs, masks, infos)
         else:
             value, _, _ = self.base(inputs, rnn_hxs, masks)
         return value
 
-    def evaluate_actions(self, inputs, rnn_hxs, masks, action, prev_rewards=None, prev_actions=None):
+    def evaluate_actions(self, inputs, rnn_hxs, masks, action, prev_rewards=None, prev_actions=None, infos=None):
         if self.meta:
-            value, actor_features, rnn_hxs = self.base(inputs, prev_actions, prev_rewards, rnn_hxs, masks)
+            value, actor_features, rnn_hxs = self.base(inputs, prev_actions, prev_rewards, rnn_hxs, masks, infos)
         else:
             value, actor_features, rnn_hxs = self.base(inputs, rnn_hxs, masks)
         dist = self.dist(actor_features)
@@ -116,7 +115,7 @@ class NNBase(nn.Module):
     def output_size(self):
         return self._hidden_size
 
-    def _forward_gru(self, x, hxs, masks, prev_action=None, prev_reward=None):
+    def _forward_gru(self, x, hxs, masks, prev_action=None, prev_reward=None, infos=None):
         # convert action to one hot vector
         if prev_action is not None:
             prev_action = torch.nn.functional.one_hot(prev_action, 4).squeeze(1)
@@ -125,6 +124,9 @@ class NNBase(nn.Module):
             if prev_action is not None and prev_reward is not None:
                 # [16, 128] -> [16, 133]
                 x = torch.cat([x, prev_action.float(), prev_reward.float()], dim=1)
+            if infos is not None:
+                # [16, 128] -> [16, 133] -> [16, 139]
+                x = torch.cat([x, infos.float()], dim=1)
             x = hxs = self.gru(x, hxs * masks)
         else:
             # x is a (T, N, -1) tensor that has been flatten to (T * N, -1)
@@ -140,6 +142,11 @@ class NNBase(nn.Module):
 
                 # [80, 1, 128] -> [80, 1, 133]
                 x = torch.cat([x, prev_action.float(), prev_reward.float()], dim=2)
+
+            if infos is not None:
+                infos = infos.view(T, N, infos.size(1))
+                # [80, 1, 128] -> [80, 1, 133] -> [80, 1, 139]
+                x = torch.cat([x, infos.float()], dim=2)
 
             # Same deal with masks
             masks = masks.view(T, N, 1)
@@ -304,7 +311,8 @@ class CNNBase(NNBase):
 
 
 class CNNMetaBase(NNBase):
-    def __init__(self, num_inputs, recurrent=False, hidden_size=133):
+    def __init__(self, num_inputs, recurrent=False, hidden_size=133, use_info=True):
+        hidden_size = hidden_size + 6 if use_info else hidden_size
         super(CNNMetaBase, self).__init__(recurrent, hidden_size, hidden_size)
 
         init_ = lambda m: init(m,
@@ -313,6 +321,9 @@ class CNNMetaBase(NNBase):
             nn.init.calculate_gain('relu'))
 
         # For 80x60 input
+        # -4 from action, -1 from reward, -6 for info
+        output_size = hidden_size - 1 - 4
+        output_size = output_size - 6 if use_info else output_size
         self.main = nn.Sequential(
             init_(nn.Conv2d(num_inputs, 32, kernel_size=5, stride=2)),
             nn.BatchNorm2d(32),
@@ -331,8 +342,7 @@ class CNNMetaBase(NNBase):
 
             #nn.Dropout(0.2),
 
-            # -4 from action and -1 from reward
-            init_(nn.Linear(32 * 7 * 5, hidden_size - 5)),
+            init_(nn.Linear(32 * 7 * 5, output_size)),
             nn.ReLU()
         )
 
@@ -344,7 +354,7 @@ class CNNMetaBase(NNBase):
 
         self.train()
 
-    def forward(self, inputs, prev_actions, prev_rewards, rnn_hxs, masks):
+    def forward(self, inputs, prev_actions, prev_rewards, rnn_hxs, masks, infos=None):
         #print(x.size())
 
         x = inputs / 255.0
@@ -354,7 +364,7 @@ class CNNMetaBase(NNBase):
         #print(x.size())
 
         if self.is_recurrent:
-            x, rnn_hxs = self._forward_gru(x, rnn_hxs, masks, prev_actions, prev_rewards)
+            x, rnn_hxs = self._forward_gru(x, rnn_hxs, masks, prev_actions, prev_rewards, infos)
 
         return self.critic_linear(x), x, rnn_hxs
 
